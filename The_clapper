@@ -1,0 +1,190 @@
+/*
+=======================
+Created by Evan Hoflich
+=======================
+*/
+
+#define DELAY 200 // time to wait after a clap (prevents detecting lots of claps as 1 signal)
+#define RELAY_PIN 4 //defining the relay pin
+#define SENSOR_PIN 3 //defining the sensor pin
+#define DIFF_MAX 750 // max milliseconds difference between 2 claps
+#include <SPI.h>
+#include <WiFi101.h>//include the wifi library
+#include <BlynkSimpleMKR1000.h>//include the blynk library
+
+char auth[] = "YourAuthToken";//authenication token to match the code with the device that will be controlling it
+char ssid[] = "YourNetworkName"; //wifi credidentials, I will leave these blank but in the real code have to be changed
+char pass[] = "YourPassword";
+
+int micPin = A1;//defining the microphone pin
+int micValue = 0;//default microphone value
+int redPin= 4;//Defining the red pin
+int greenPin = 3;//defining the green pin
+int bluePin = 5;//defining the blue pin
+int state = 0; //Default state for the pir sensor and microphone
+int trigger = 760;//Trigger value for the microphone to detect the clap sounds as an input
+int clap_loop = -1; //default value for the clap loop
+int red[6] = {255, 0 , 0, 204, 0, 102}; //List of red RGB colours (Remeber to change the index number according to how much data is inside the array)
+int green[6] = {0, 255, 0, 0, 153, 51};//List of green RGB colours
+int blue[6] = {0, 0, 255, 255, 204, 0};
+int r; //defining the red pin
+int g;//defining the green pin
+int b;//defining the blue pin
+int numColours = 5; //If adding a new colour, you must increase this value (Is one less than number of colours)
+int defaultcolor[3] = {255, 172, 68}; //Colour that is set when a double clap is sensed
+int led = 13;                // the pin that the LED is atteched to
+int sensor = 1;              // the pin that the sensor is atteched to
+int val = 0;                 // variable to store the sensor status (value)
+
+void setup() 
+{
+  Serial.begin(9600); //begin the serial monitor at a 9600 bit rate
+  Blynk.begin(auth, ssid, pass);//begin the blynk server
+  pinMode(redPin, OUTPUT); //defining outputs
+  pinMode(greenPin, OUTPUT);
+  pinMode(bluePin, OUTPUT);
+}
+
+boolean firstClap = false; //setting variables used, to have the default value of false (off)
+boolean secondClap = false;
+boolean offClap1 = false;
+boolean doubleClapOn = false;
+boolean cycle_colours = false;
+
+unsigned long firstClapTime;//defining variables to store information in a 32 bit storage as time can take up alot of space
+unsigned long offClap1Time;
+unsigned long lastOperation = 0;
+
+void loop()
+{
+//  Serial.print("Microphone value = "); //testing purposes
+//  Serial.println(micValue);
+  Blynk.run();//run the blynk server
+  if(millis() - lastOperation < DELAY) // wait DELAY time because sound lasts some time
+      return;
+
+  micValue = analogRead(micPin);
+  if(micValue > trigger) // someone's clapping
+  {
+      if(firstClap == false) // this loop for when a first clap is received
+      {
+          firstClap = true;
+          firstClapTime = millis();
+          Serial.println("First clap has been noticed");
+      }
+      else if(secondClap == false) // this loop for when first clap is received but not yet 2nd
+      {
+          if(millis() - firstClapTime < DIFF_MAX) // make sure second clap is made in short period of time
+          {
+              secondClap = true;
+              Serial.println("Double clap has been noticed");
+
+          }
+          else 
+          {
+              // too long between double claps
+          }
+      }
+      else // firstClap and secondClap = true, so that means we should turn off the lights
+      {
+          if(offClap1 == false)
+          {
+              offClap1 = true;
+              offClap1Time = millis();
+              Serial.println("Lights are on, received first clap to turn off");
+          }
+          else // first OFF clap was made, now is the second
+          {
+              unsigned long offClap2Time = millis();
+              if(offClap2Time - offClap1Time < DIFF_MAX) // make sure two second clap were made in short period of time
+              {
+                  firstClap = false;
+                  secondClap = false;
+                  Serial.println("Turn off double clap");
+                  cycle_colours = false;
+              }
+              offClap1 = false;     
+          }
+      }
+
+      lastOperation = millis();
+  }
+
+  unsigned long diff = millis() - firstClapTime;
+  if(firstClap == true && secondClap == false && diff > DIFF_MAX) // reset firstClap value if there was no second clap
+  {
+      firstClap = false;
+  }
+
+  diff = millis() - offClap1Time;
+  if(offClap1 == true && diff > DIFF_MAX) // reset offClap value if there was no second clap in time
+  {
+      offClap1 = false;
+      //Serial.println("One clap received but 2nd clap not received, so resetting offClap1");
+      cycle_colours = true;
+      clap_loop = clap_loop + 1;
+      Serial.print("We are on clap loop ");
+      Serial.println(clap_loop);
+      if (clap_loop == 6)
+      {
+        clap_loop = 0;
+        Serial.print("Reseting clap_loop to 0");
+      }
+  }
+
+  if (secondClap == true)
+  {
+    if (cycle_colours == true)
+    {
+      if (clap_loop <= numColours)
+      {
+        //Serial.print("RGB = ");
+        r = red[clap_loop];
+        //Serial.print(r);
+        //Serial.print(",");
+    
+        g = green[clap_loop];
+        //Serial.print(g);
+        //Serial.print(",");
+    
+        b = blue[clap_loop];
+        //Serial.print(b);
+        //Serial.println(" ");
+
+        setColor(r, g, b);
+      }
+    }
+    if (cycle_colours != true)
+    {
+      //setColor(244, 255, 250); // Standard Flourescent
+      //setColor(255, 172, 68); //
+      setColor(defaultcolor[0],defaultcolor[1],defaultcolor[2]);
+    }
+  }
+  
+  else 
+  {
+    setColor(0, 0, 0); // Turn the led's off
+  }//The PIR code starts here
+  state = LOW;
+  setColor(0, 0, 0); //the defualt is off
+  val = digitalRead(sensor);   // read sensor value
+  if (val == HIGH) {           // check if the sensor is HIGH
+      Serial.println("Motion detected!"); 
+      setColor(244, 255, 250); //turns led to flourescent
+      delay(200);
+      state = HIGH;       // update variable state to HIGH
+}
+
+   if (state == LOW){
+      Serial.println("No motion detected");
+  }
+}
+}
+
+
+void setColor(int redValue, int greenValue, int blueValue) { //setting the colours so they can be used in an RGB format
+  analogWrite(redPin, redValue);
+  analogWrite(greenPin, greenValue);
+  analogWrite(bluePin, blueValue);
+}
